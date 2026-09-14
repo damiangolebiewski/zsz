@@ -22,20 +22,36 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 'use strict';
 // CONFIG POZIOMÓW — target: cel piątek; prędkości w pikselach logicznych/s.
 // exam: udział sprawdzianów wśród jedynek; interval: odstęp spawnu w sekundach.
-const LEVELS = [
+const BASE_LEVELS = [
   {target:12, time:35, speed:168, interval:0.8925, good:0.60, diagonal:0,    exam:0,    brightness:1},
   {target:16, time:40, speed:246, interval:0.7225, good:0.50, diagonal:0.35, exam:0,    brightness:0.85},
-  {target:20, time:45, speed:324, interval:0.5950, good:0.40, diagonal:0.70, exam:0.35, brightness:0.85}
+  {target:16, time:60, speed:324, interval:0.5950, good:0.40, diagonal:0.70, exam:0.35, brightness:0.85}
 ];
+// WYBÓR TRUDNOŚCI — normalny zachowuje dotychczasowy balans.
+const DIFFICULTIES=[
+  {name:'Łatwy',key:'easy',targets:[8,12,12],times:[50,60,75],speed:0.8,interval:1.1,good:0.10,series:1},
+  {name:'Normalny',key:'normal',targets:[12,16,16],times:[35,40,60],speed:1,interval:1,good:0,series:2},
+  {name:'Trudny',key:'hard',targets:[14,18,20],times:[35,40,50],speed:1.1,interval:0.9,good:0,series:3}
+];
+let difficulty=1;
+let LEVELS=BASE_LEVELS.map(x=>({...x}));
+const sessionBests=[0,0,0];
+function recordKey(){return difficulty===1?'ruszkowski-hard-v1':'ruszkowski-difficulty-v1-'+DIFFICULTIES[difficulty].key;}
+function applyDifficulty(){
+  const d=DIFFICULTIES[difficulty];
+  LEVELS=BASE_LEVELS.map((x,i)=>({...x,target:d.targets[i],time:d.times[i],
+    speed:x.speed*d.speed,interval:x.interval*d.interval,good:x.good+d.good}));
+  best=readBest();
+}
 const W=1280, H=720, FLOOR=H*0.85, PLAYER_H=H*0.22;
 const BOOST_TIME=3, BOOST_EVERY=20, BOOST_FIRST=9, MAGNET=150;
 const EXAM_WARNING=0.7, INVULNERABLE=0.8;
 // Nowa wersja punktacji ma osobny rekord; brak dostępu do zapisu nie blokuje gry.
-const RECORD_KEY='ruszkowski-hard-v1';
+// Każdy tryb ma osobny rekord, również gdy zapis jest zablokowany.
 function readBest(){
-  try{const n=Number(localStorage.getItem(RECORD_KEY));return Number.isSafeInteger(n)&&n>=0?n:0;}catch{return 0;}
+  try{const n=Number(localStorage.getItem(recordKey()));return Math.max(sessionBests[difficulty],Number.isSafeInteger(n)&&n>=0?n:0);}catch{return sessionBests[difficulty];}
 }
-function saveBest(){try{localStorage.setItem(RECORD_KEY,String(best));}catch{}}
+function saveBest(){sessionBests[difficulty]=best;try{localStorage.setItem(recordKey(),String(best));}catch{}}
 const canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
 let dpr=1;
 function resize(){
@@ -82,10 +98,11 @@ function startLevel(){
   Object.assign(player,{x:W/2,dir:1,moving:false,red:0,green:0,knock:0});
   paused=false;clearInput();state='play';
 }
-function newGame(){retried=false;level=0;selected=0;checkpoint=0;startLevel();}
+function newGame(){applyDifficulty();retried=false;level=0;selected=0;checkpoint=0;startLevel();}
 function advance(){
   if(menuAge<0.2)return;
-  if(state==='title'||state==='win')newGame();
+  if(state==='title'||state==='win')menu('difficulty');
+  else if(state==='difficulty')newGame();
   else if(state==='repeat'){retried=true;startLevel();}
   else if(state==='promotion'){level++;retried=false;checkpoint=score;menu('select');}
   else if(state==='select')startLevel();
@@ -104,6 +121,7 @@ const keys=new Set(),pointers=new Map();
 function point(e){const r=canvas.getBoundingClientRect();return {x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};}
 function inside(p,r){return p.x>=r.x&&p.x<=r.x+r.w&&p.y>=r.y&&p.y<=r.y+r.h;}
 const muteBox={x:1190,y:14,w:72,h:54},pauseBox={x:1105,y:14,w:72,h:54};
+const difficultyCards=[{x:115,y:260,w:330,h:270},{x:475,y:260,w:330,h:270},{x:835,y:260,w:330,h:270}];
 const cards=[{x:310,y:250,w:300,h:310},{x:670,y:250,w:300,h:310}];
 window.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
@@ -115,6 +133,9 @@ window.addEventListener('keydown',e=>{
   if(k==='p')togglePause();
   if(k==='r'&&state==='play'){retried=true;startLevel();}
   if(state==='select'&&['arrowleft','a','arrowright','d'].includes(k))selected=['arrowleft','a'].includes(k)?0:1;
+  if(state==='difficulty'&&['arrowleft','a','arrowright','d'].includes(k)){
+    difficulty=Math.max(0,Math.min(2,difficulty+(['arrowleft','a'].includes(k)?-1:1)));
+  }
   if(k==='enter'){if(paused)togglePause();else advance();}
 });
 window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
@@ -125,6 +146,11 @@ canvas.addEventListener('pointerdown',e=>{
     if(inside(p,pauseBox)||paused){togglePause();return;}
     pointers.set(e.pointerId,p.x<W/2?-1:1);
     try{canvas.setPointerCapture(e.pointerId);}catch{}
+  }else if(state==='difficulty'){
+    if(menuAge<0.2)return;
+    const i=difficultyCards.findIndex(r=>inside(p,r));
+    if(i>=0)difficulty=i;
+    advance();
   }else if(state==='select'){
     const i=cards.findIndex(r=>inside(p,r));
     if(i>=0){selected=i;advance();}else advance();
@@ -171,8 +197,8 @@ function sound(kind){
 function spawn(kind,fromSeries=false){
   const cfg=LEVELS[level];
   if(!kind)kind=Math.random()<cfg.good?'5':(Math.random()<cfg.exam?'exam':'1');
-  // Seria trzech sprawdzianów: pierwszy teraz, dwa kolejne co 0,55 s.
-  if(kind==='exam'&&!fromSeries&&examQueue===0){examQueue=2;examIn=0.55;}
+  // Długość serii zależy od trudności; odstęp między kartkami 0,55 s.
+  if(kind==='exam'&&!fromSeries&&examQueue===0){examQueue=DIFFICULTIES[difficulty].series-1;examIn=0.55;}
   const diagonal=kind!=='logo'&&Math.random()<cfg.diagonal;
   items.push({kind,x:100+Math.random()*(W-200),y:-90,
     vx:diagonal?(Math.random()<0.5?-1:1)*cfg.speed*0.45:0,
@@ -326,7 +352,7 @@ function drawUI(){
   if(state==='play'){
     drawHUD();
     panel(14,654,320,50);
-    text('TRUDNA · Czas: '+Math.max(0,Math.ceil(LEVELS[level].time-elapsed))+' s',174,679,23,LEVELS[level].time-elapsed<=10?'#ff7975':'#ffda62');
+    text('Czas: '+Math.max(0,Math.ceil(LEVELS[level].time-elapsed))+' s',174,679,23,LEVELS[level].time-elapsed<=10?'#ff7975':'#ffda62');
     if(noticeTime>0){panel(300,175,680,48);text(notice,640,199,21,'#ffda62');}
     if(paused){panel(290,240,700,230);text('PAUZA',640,300,48,'#ffda62');text('P / Enter / dotknij, aby wrócić',640,370,25);}
   }else{
@@ -335,13 +361,25 @@ function drawUI(){
       logo(640,36,104);text('RUSZKOWSKI: ZDAJ ALBO POWTARZAJ',640,185,42,'#ffda62');
       text('Dzień Programisty 2026 · ZSZ im. Jana Ruszkowskiego w Pułtusku',640,238,23);
       panel(250,292,780,204);
-      text('Zbieraj zielone 5 — cele klas: 12 / 16 / 20 piątek.',640,338,25,'#7ced8b');
+      text('Zbieraj zielone 5 — osiągnij cel przed końcem czasu.',640,338,25,'#7ced8b');
       text('Unikaj czerwonych 1 — trzy jedynki to powtórka.',640,393,25,'#ff9690');
       text('Logo = 3 s tarczy · przepuszczona piątka: −1.',640,448,25,'#ffda62');
-      text('WERSJA TRUDNA · Limity czasu: 35 / 40 / 45 s',640,525,24,'#ffda62');
+      text('Wybierz trudność na następnym ekranie',640,525,24,'#ffda62');
       text('Piątki w serii: +100 do +200 pkt · jedynka zeruje serię',640,558,18,'#c3d0e2');
       button('Naciśnij Enter / dotknij ekranu');
       text('← → lub A/D: ruch · P: pauza · R: restart · M: dźwięk',640,664,20,'#c3d0e2');
+    }else if(state==='difficulty'){
+      text('Wybierz trudność',640,140,46,'#ffda62');
+      text('← → i Enter lub dotknij wybranej karty',640,205,24);
+      difficultyCards.forEach((r,i)=>{
+        const d=DIFFICULTIES[i];
+        panel(r.x,r.y,r.w,r.h,i===difficulty?'#34466c':'#14233d');
+        ctx.strokeStyle=i===difficulty?'#ffda62':'#697995';ctx.lineWidth=4;ctx.strokeRect(r.x,r.y,r.w,r.h);
+        text(d.name,r.x+r.w/2,r.y+48,34,i===difficulty?'#ffda62':'#fff');
+        text('Piątki: '+d.targets.join(' / '),r.x+r.w/2,r.y+110,21);
+        text('Czas: '+d.times.join(' / ')+' s',r.x+r.w/2,r.y+151,21);
+        text(['Wolniej, więcej piątek','Dotychczasowy balans','Szybciej, dłuższe serie'][i],r.x+r.w/2,r.y+208,19,'#cbd7e7');
+      });button('Enter — zaczynamy',610);
     }else if(state==='select'){
       text(level===1?'Odblokowano: nauczyciel dołącza do gry!':'Wybierz postać przed Klasą 3',640,132,38,'#ffda62');
       text('Klasa '+(level+1)+' · ← → i Enter lub dotknij karty',640,195,25);
@@ -358,7 +396,7 @@ function drawUI(){
       text('ZSZ im. Jana Ruszkowskiego w Pułtusku',640,360,24,'#44506a');
       if(retried)text('Poprawka zaliczona!',640,395,22,'#317844');
       text('Wynik: '+score,640,435,34,'#162743');
-      text('Rekord: '+best,640,488,25,'#44506a');button('Od nowa',570);
+      text('Rekord ('+DIFFICULTIES[difficulty].name+'): '+best,640,488,25,'#44506a');button('Od nowa',570);
     }else{
       panel(200,215,880,320);
       text(state==='repeat'?'Powtarzasz klasę!':'Zdałeś! Promocja do klasy '+(level+2),640,280,42,state==='repeat'?'#ff8d85':'#81eb91');
