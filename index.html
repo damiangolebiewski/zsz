@@ -23,12 +23,19 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 // CONFIG POZIOMÓW — target: cel piątek; prędkości w pikselach logicznych/s.
 // exam: udział sprawdzianów wśród jedynek; interval: odstęp spawnu w sekundach.
 const LEVELS = [
-  {target:8,  speed:168, interval:0.8925, good:0.60, diagonal:0,    exam:0,    brightness:1},
-  {target:12, speed:246, interval:0.7225, good:0.50, diagonal:0.35, exam:0,    brightness:0.85},
-  {target:16, speed:324, interval:0.5950, good:0.40, diagonal:0.70, exam:0.35, brightness:0.85}
+  {target:12, time:35, speed:168, interval:0.8925, good:0.60, diagonal:0,    exam:0,    brightness:1},
+  {target:16, time:40, speed:246, interval:0.7225, good:0.50, diagonal:0.35, exam:0,    brightness:0.85},
+  {target:20, time:45, speed:324, interval:0.5950, good:0.40, diagonal:0.70, exam:0.35, brightness:0.85}
 ];
 const W=1280, H=720, FLOOR=H*0.85, PLAYER_H=H*0.22;
-const BOOST_TIME=5, BOOST_EVERY=20, MAGNET=250;
+const BOOST_TIME=3, BOOST_EVERY=20, BOOST_FIRST=9, MAGNET=150;
+const EXAM_WARNING=0.7, INVULNERABLE=0.8;
+// Nowa wersja punktacji ma osobny rekord; brak dostępu do zapisu nie blokuje gry.
+const RECORD_KEY='ruszkowski-hard-v1';
+function readBest(){
+  try{const n=Number(localStorage.getItem(RECORD_KEY));return Number.isSafeInteger(n)&&n>=0?n:0;}catch{return 0;}
+}
+function saveBest(){try{localStorage.setItem(RECORD_KEY,String(best));}catch{}}
 const canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
 let dpr=1;
 function resize(){
@@ -58,30 +65,36 @@ function logo(x,y,h){
 }
 
 // STAN GRY — checkpoint cofa punkty nieudanej próby, zapobiegając farmieniu.
-let state='title',level=0,selected=0,score=0,best=0,checkpoint=0;
+let state='title',level=0,selected=0,score=0,best=readBest(),checkpoint=0;
 let fives=0,ones=0,elapsed=0,spawnIn=0.8,boostIn=BOOST_EVERY,boost=0;
 let items=[],sparks=[],shake=0,clock=0,paused=false,menuAge=0;
+let examQueue=0,examIn=0,failure='';
+let combo=0,invulnerable=0,retried=false,notice='',noticeTime=0;
+function announce(message){notice=message;noticeTime=2.5;}
 const player={x:W/2,dir:1,moving:false,red:0,green:0,knock:0};
 function clearInput(){keys.clear();pointers.clear();player.moving=false;}
 function menu(next){state=next;menuAge=0;clearInput();}
 function startLevel(){
   score=checkpoint;fives=0;ones=0;elapsed=0;boost=0;
-  spawnIn=0.8;boostIn=BOOST_EVERY;items=[];sparks=[];shake=0;
+  examQueue=0;examIn=0;failure='';
+  combo=0;invulnerable=0;notice='';noticeTime=0;
+  spawnIn=0.8;boostIn=BOOST_FIRST;items=[];sparks=[];shake=0;
   Object.assign(player,{x:W/2,dir:1,moving:false,red:0,green:0,knock:0});
   paused=false;clearInput();state='play';
 }
-function newGame(){level=0;selected=0;checkpoint=0;startLevel();}
+function newGame(){retried=false;level=0;selected=0;checkpoint=0;startLevel();}
 function advance(){
   if(menuAge<0.2)return;
   if(state==='title'||state==='win')newGame();
-  else if(state==='repeat')startLevel();
-  else if(state==='promotion'){level++;checkpoint=score;menu('select');}
+  else if(state==='repeat'){retried=true;startLevel();}
+  else if(state==='promotion'){level++;retried=false;checkpoint=score;menu('select');}
   else if(state==='select')startLevel();
 }
+function failLevel(reason){failure=reason;sound('sad');menu('repeat');}
 function finishLevel(){
   if(ones===0)score+=500;
   sound('fanfare');
-  if(level===2){best=Math.max(best,score);menu('win');}
+  if(level===2){best=Math.max(best,score);saveBest();menu('win');}
   else menu('promotion');
 }
 function togglePause(){if(state==='play'){paused=!paused;clearInput();}}
@@ -100,7 +113,7 @@ window.addEventListener('keydown',e=>{
   keys.add(k);
   if(k==='m')muted=!muted;
   if(k==='p')togglePause();
-  if(k==='r'&&state==='play')startLevel();
+  if(k==='r'&&state==='play'){retried=true;startLevel();}
   if(state==='select'&&['arrowleft','a','arrowright','d'].includes(k))selected=['arrowleft','a'].includes(k)?0:1;
   if(k==='enter'){if(paused)togglePause();else advance();}
 });
@@ -155,13 +168,15 @@ function sound(kind){
 }
 
 // SPAWNER — w klasie 3 sprawdziany zastępują część jedynek.
-function spawn(kind){
+function spawn(kind,fromSeries=false){
   const cfg=LEVELS[level];
   if(!kind)kind=Math.random()<cfg.good?'5':(Math.random()<cfg.exam?'exam':'1');
+  // Seria trzech sprawdzianów: pierwszy teraz, dwa kolejne co 0,55 s.
+  if(kind==='exam'&&!fromSeries&&examQueue===0){examQueue=2;examIn=0.55;}
   const diagonal=kind!=='logo'&&Math.random()<cfg.diagonal;
   items.push({kind,x:100+Math.random()*(W-200),y:-90,
     vx:diagonal?(Math.random()<0.5?-1:1)*cfg.speed*0.45:0,
-    vy:kind==='logo'?145:cfg.speed,phase:Math.random()*Math.PI*2,reflected:false});
+    vy:kind==='logo'?145:cfg.speed,phase:Math.random()*Math.PI*2,reflected:false,warning:kind==='exam'?EXAM_WARNING:0});
 }
 function size(o){return o.kind==='exam'?{w:200,h:84}:o.kind==='logo'?{w:58,h:70}:{w:54,h:70};}
 function burst(x,y,color){
@@ -192,22 +207,29 @@ function collides(o){
 function collect(o){
   if(o.kind==='logo'){boost=BOOST_TIME;sound('powerup');burst(player.x,FLOOR-80,'#ffda62');return;}
   if(o.kind==='5'){
-    fives++;score+=100;player.green=.15;sound('ding');burst(o.x,o.y,'#2ecc40');
+    fives++;combo++;score+=100+Math.min(combo-1,5)*20;player.green=.15;sound('ding');burst(o.x,o.y,'#2ecc40');
     if(fives>=LEVELS[level].target)finishLevel();
   }else{
-    ones++;player.red=.3;shake=.22;
+    if(invulnerable>0)return;
+    ones++;combo=0;invulnerable=INVULNERABLE;player.red=.3;shake=.22;
+    if(ones===2)announce('Zagrożenie! Jeszcze jedna jedynka i poprawka.');
     player.knock=(player.x>=o.x?1:-1)*450;sound('buzz');burst(o.x,o.y,'#e5322d');
-    if(ones===3){sound('sad');menu('repeat');}
+    if(ones===3)failLevel('Trzy jedynki — czas na poprawkę.');
   }
 }
 function update(dt){
+  invulnerable=Math.max(0,invulnerable-dt);noticeTime=Math.max(0,noticeTime-dt);
   updatePlayer(dt);boost=Math.max(0,boost-dt);shake=Math.max(0,shake-dt);
   const old=Math.floor(elapsed);elapsed+=dt;score+=Math.floor(elapsed)-old;
+  if(elapsed>=LEVELS[level].time){failLevel('Koniec czasu! Nie udało się zebrać wymaganych piątek.');return;}
+  if(examQueue>0){examIn-=dt;if(examIn<=0){spawn('exam',true);examQueue--;examIn+=0.55;}}
   spawnIn-=dt;boostIn-=dt;
   if(spawnIn<=0){spawn();spawnIn+=LEVELS[level].interval;}
   if(boostIn<=0){spawn('logo');boostIn+=BOOST_EVERY;}
   for(let i=items.length-1;i>=0;i--){
     const o=items[i];
+    // Sprawdzian czeka nieruchomo na końcu ostrzeżenia; nie ma jeszcze kolizji.
+    if(o.warning>0){o.warning=Math.max(0,o.warning-dt);continue;}
     if(boost>0&&o.kind==='5'&&!o.reflected){
       const dx=player.x-o.x,dy=FLOOR-PLAYER_H/2-o.y,dist=Math.hypot(dx,dy);
       if(dist<MAGNET){const speed=650;o.vx=dx/Math.max(dist,1)*speed;o.vy=dy/Math.max(dist,1)*speed;}
@@ -221,6 +243,10 @@ function update(dt){
         o.reflected=true;o.vy=-420;o.vx=(o.x<player.x?-1:1)*260;sound('clang');
         burst(o.x,o.y,'#ffda62');
       }else{items.splice(i,1);collect(o);if(state!=='play')return;}
+    }else if(o.kind==='5'&&o.y-size(o).h/2>FLOOR){
+      // Piątka minęła stopy — odejmujemy postęp tylko raz, bez wartości ujemnych.
+      fives=Math.max(0,fives-1);items.splice(i,1);
+      announce('Uciekła piątka! −1 do postępu klasy.');
     }else if(o.y>H+120||(o.reflected&&o.y<-120))items.splice(i,1);
   }
   for(const p of sparks){p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=300*dt;}
@@ -252,6 +278,7 @@ function drawPlayer(){
   ctx.save();ctx.translate(player.x,FLOOR+bounce);
   ctx.rotate(player.moving?player.dir*8*Math.PI/180:0);
   ctx.scale(player.dir,1);
+  if(invulnerable>0)ctx.globalAlpha=Math.sin(clock*35)>0?0.4:1;
   if(player.green>0)ctx.scale(1.15,1.15);
   if(boost>0||player.red>0||player.green>0){
     ctx.shadowColor=player.red>0?'#ff2020':player.green>0?'#2ecc40':'#ffd65a';ctx.shadowBlur=24;
@@ -261,6 +288,12 @@ function drawPlayer(){
   picture(selected?'damian':'uczen',-w/2,-PLAYER_H,w,PLAYER_H);ctx.restore();
 }
 function drawItem(o){
+  if(o.warning>0){
+    ctx.save();ctx.globalAlpha=0.75+0.25*Math.sin(clock*20);
+    const x=Math.max(105,Math.min(W-105,o.x));
+    panel(x-95,100,190,60,'#8e251f');text('! SPRAWDZIAN',x,130,21,'#fff');
+    ctx.restore();return;
+  }
   ctx.save();ctx.translate(o.x,o.y);ctx.rotate(Math.sin(clock*2+o.phase)*Math.PI/12);
   if(o.kind==='logo'){
     ctx.shadowColor='#ffd65a';ctx.shadowBlur=18+8*Math.sin(clock*5);logo(0,-35,70);
@@ -283,6 +316,7 @@ function drawHUD(){
   ctx.fillStyle='#344054';ctx.fillRect(220,61,500,14);
   ctx.fillStyle='#ffda62';ctx.fillRect(220,61,500*boost/BOOST_TIME,14);
   text(boost>0?boost.toFixed(1)+' s':'Złap logo szkoły',745,69,17,'#c8d5e8','left');
+  text('Seria: '+combo+' · następna 5: +'+(100+Math.min(combo,5)*20),920,70,15,'#7ced8b','left');
   panel(pauseBox.x,pauseBox.y,pauseBox.w,pauseBox.h);text('Ⅱ',1141,41,27);
 }
 function button(label,y=600){panel(390,y-28,500,56,'#d7b14d');text(label,W/2,y,24,'#101b30');}
@@ -291,6 +325,9 @@ function button(label,y=600){panel(390,y-28,500,56,'#d7b14d');text(label,W/2,y,2
 function drawUI(){
   if(state==='play'){
     drawHUD();
+    panel(14,654,320,50);
+    text('TRUDNA · Czas: '+Math.max(0,Math.ceil(LEVELS[level].time-elapsed))+' s',174,679,23,LEVELS[level].time-elapsed<=10?'#ff7975':'#ffda62');
+    if(noticeTime>0){panel(300,175,680,48);text(notice,640,199,21,'#ffda62');}
     if(paused){panel(290,240,700,230);text('PAUZA',640,300,48,'#ffda62');text('P / Enter / dotknij, aby wrócić',640,370,25);}
   }else{
     ctx.fillStyle='rgba(4,12,28,.78)';ctx.fillRect(0,0,W,H);
@@ -298,9 +335,11 @@ function drawUI(){
       logo(640,36,104);text('RUSZKOWSKI: ZDAJ ALBO POWTARZAJ',640,185,42,'#ffda62');
       text('Dzień Programisty 2026 · ZSZ im. Jana Ruszkowskiego w Pułtusku',640,238,23);
       panel(250,292,780,204);
-      text('Zbieraj zielone 5 — cele klas: 8 / 12 / 16 piątek.',640,338,25,'#7ced8b');
+      text('Zbieraj zielone 5 — cele klas: 12 / 16 / 20 piątek.',640,338,25,'#7ced8b');
       text('Unikaj czerwonych 1 — trzy jedynki to powtórka.',640,393,25,'#ff9690');
-      text('Logo szkoły = 5 s tarczy i magnesu na piątki.',640,448,25,'#ffda62');
+      text('Logo = 3 s tarczy · przepuszczona piątka: −1.',640,448,25,'#ffda62');
+      text('WERSJA TRUDNA · Limity czasu: 35 / 40 / 45 s',640,525,24,'#ffda62');
+      text('Piątki w serii: +100 do +200 pkt · jedynka zeruje serię',640,558,18,'#c3d0e2');
       button('Naciśnij Enter / dotknij ekranu');
       text('← → lub A/D: ruch · P: pauza · R: restart · M: dźwięk',640,664,20,'#c3d0e2');
     }else if(state==='select'){
@@ -317,13 +356,15 @@ function drawUI(){
       text('ZDAŁEŚ!',640,242,55,'#162743');
       text('Świadectwo z wyróżnieniem',640,306,35,'#162743');
       text('ZSZ im. Jana Ruszkowskiego w Pułtusku',640,360,24,'#44506a');
+      if(retried)text('Poprawka zaliczona!',640,395,22,'#317844');
       text('Wynik: '+score,640,435,34,'#162743');
-      text('Najlepszy wynik sesji: '+best,640,488,25,'#44506a');button('Od nowa',570);
+      text('Rekord: '+best,640,488,25,'#44506a');button('Od nowa',570);
     }else{
       panel(200,215,880,320);
       text(state==='repeat'?'Powtarzasz klasę!':'Zdałeś! Promocja do klasy '+(level+2),640,280,42,state==='repeat'?'#ff8d85':'#81eb91');
+      if(state==='promotion'&&retried)text('Poprawka zaliczona!',640,318,21,'#ffda62');
       text('Wynik: '+score,640,350,31);
-      text(state==='repeat'?'Ta próba zostanie cofnięta. Liczniki startują od zera.':ones===0?'Bez jedynki! Premia +500 punktów.':'Kolejna klasa czeka.',640,412,23,'#cbd7e7');
+      text(state==='repeat'?failure:ones===0?'Bez jedynki! Premia +500 punktów.':'Kolejna klasa czeka.',640,412,23,'#cbd7e7');
       button('Enter / dotknij — dalej',490);
     }
   }
