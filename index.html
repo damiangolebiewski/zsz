@@ -26,18 +26,19 @@ const BASE_LEVELS = [
   {target:12, time:35, speed:168, interval:0.8925, good:0.60, diagonal:0,    exam:0,    brightness:1},
   {target:16, time:40, speed:246, interval:0.7225, good:0.50, diagonal:0.35, exam:0,    brightness:0.85},
   {target:16, time:60, speed:324, interval:0.5950, good:0.40, diagonal:0.70, exam:0.35, brightness:0.85},
-  {target:20, time:55, speed:350, interval:1.0, good:1, diagonal:0.30, exam:0, brightness:0.80}
+  {target:20, time:55, speed:350, interval:1.0, good:1, diagonal:0.30, exam:0, brightness:0.80},
+  {target:14, time:65, speed:0, interval:1.8, good:1, diagonal:0, exam:0, brightness:0.90}
 ];
 // WYBÓR TRUDNOŚCI — normalny zachowuje dotychczasowy balans.
 const DIFFICULTIES=[
-  {name:'Łatwy',key:'easy',targets:[8,12,12],times:[50,60,75],speed:0.8,interval:1.1,good:0.10,series:1},
-  {name:'Normalny',key:'normal',targets:[12,16,16,20],times:[35,40,60,55],speed:1,interval:1,good:0,series:2},
-  {name:'Trudny',key:'hard',targets:[14,18,20,24],times:[35,40,50,50],speed:1.1,interval:0.9,good:0,series:3}
+  {name:'Łatwy',key:'easy',targets:[8,12,12,14,10],times:[50,60,75,70,65],speed:0.8,interval:1.1,good:0.10,series:1},
+  {name:'Normalny',key:'normal',targets:[12,16,16,20,14],times:[35,40,60,55,65],speed:1,interval:1,good:0,series:2},
+  {name:'Trudny',key:'hard',targets:[14,18,20,24,18],times:[35,40,50,50,60],speed:1.1,interval:0.9,good:0,series:3}
 ];
 let difficulty=1;
 let LEVELS=BASE_LEVELS.map(x=>({...x}));
 const sessionBests=[0,0,0];
-function recordKey(){return difficulty===0?'ruszkowski-difficulty-v1-easy':'ruszkowski-pan-d-v1-'+DIFFICULTIES[difficulty].key;}
+function recordKey(){return 'ruszkowski-five-action-v2-'+DIFFICULTIES[difficulty].key;}
 function applyDifficulty(){
   const d=DIFFICULTIES[difficulty];
   LEVELS=BASE_LEVELS.slice(0,d.targets.length).map((x,i)=>({...x,target:d.targets[i],time:d.times[i],
@@ -105,7 +106,7 @@ let examQueue=0,examIn=0,failure='';
 let combo=0,invulnerable=0,retried=false,notice='',noticeTime=0;
 function announce(message){notice=message;noticeTime=2.5;}
 const player={x:W/2,dir:1,moving:false,red:0,green:0,knock:0};
-function clearInput(){keys.clear();pointers.clear();player.moving=false;}
+function clearInput(){keys.clear();pointers.clear();firePointers.clear();player.moving=false;}
 function menu(next){state=next;menuAge=0;clearInput();}
 function startLevel(){
   score=checkpoint;fives=0;ones=0;elapsed=0;boost=0;
@@ -113,7 +114,8 @@ function startLevel(){
   combo=0;invulnerable=0;notice='';noticeTime=0;
   spawnIn=0.8;boostIn=BOOST_FIRST;items=[];sparks=[];shake=0;
   Object.assign(player,{x:W/2,dir:1,moving:false,red:0,green:0,knock:0});
-  resetBoss();
+  selected=level===4?1:0;
+  resetTeacher();resetFinal();resetBoss();
   paused=false;clearInput();state='play';
 }
 function newGame(){applyDifficulty();retried=false;level=0;selected=0;checkpoint=0;startLevel();}
@@ -122,8 +124,8 @@ function advance(){
   if(state==='title'||state==='win')menu('difficulty');
   else if(state==='difficulty')newGame();
   else if(state==='repeat'){retried=true;startLevel();}
-  else if(state==='promotion'){level++;retried=false;checkpoint=score;menu('select');}
-  else if(state==='select')startLevel();
+  else if(state==='promotion'){level++;retried=false;checkpoint=score;menu('briefing');}
+  else if(state==='briefing')startLevel();
 }
 function failLevel(reason){failure=reason;sound('sad');menu('repeat');}
 function finishLevel(){
@@ -135,12 +137,12 @@ function finishLevel(){
 function togglePause(){if(state==='play'){paused=!paused;clearInput();}}
 
 // INPUT — Pointer Events obsługują także kilka palców naraz.
-const keys=new Set(),pointers=new Map();
+const keys=new Set(),pointers=new Map(),firePointers=new Set();
+const fireBox={x:1010,y:632,w:250,h:74};
 function point(e){const r=canvas.getBoundingClientRect();return {x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};}
 function inside(p,r){return p.x>=r.x&&p.x<=r.x+r.w&&p.y>=r.y&&p.y<=r.y+r.h;}
 const muteBox={x:1190,y:14,w:72,h:54},pauseBox={x:1105,y:14,w:72,h:54};
 const difficultyCards=[{x:115,y:260,w:330,h:270},{x:475,y:260,w:330,h:270},{x:835,y:260,w:330,h:270}];
-const cards=[{x:310,y:250,w:300,h:310},{x:670,y:250,w:300,h:310}];
 window.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if(['arrowleft','arrowright','a','d','enter','p','r','m',' '].includes(k))e.preventDefault();
@@ -150,7 +152,6 @@ window.addEventListener('keydown',e=>{
   if(k==='m')muted=!muted;
   if(k==='p')togglePause();
   if(k==='r'&&state==='play'){retried=true;startLevel();}
-  if(state==='select'&&['arrowleft','a','arrowright','d'].includes(k))selected=['arrowleft','a'].includes(k)?0:1;
   if(state==='difficulty'&&['arrowleft','a','arrowright','d'].includes(k)){
     difficulty=Math.max(0,Math.min(2,difficulty+(['arrowleft','a'].includes(k)?-1:1)));
   }
@@ -162,23 +163,21 @@ canvas.addEventListener('pointerdown',e=>{
   if(inside(p,muteBox)){muted=!muted;return;}
   if(state==='play'){
     if(inside(p,pauseBox)||paused){togglePause();return;}
-    pointers.set(e.pointerId,p.x<W/2?-1:1);
+    if(level===4&&inside(p,fireBox))firePointers.add(e.pointerId);
+    else pointers.set(e.pointerId,p.x<W/2?-1:1);
     try{canvas.setPointerCapture(e.pointerId);}catch{}
   }else if(state==='difficulty'){
     if(menuAge<0.2)return;
     const i=difficultyCards.findIndex(r=>inside(p,r));
     if(i>=0)difficulty=i;
     advance();
-  }else if(state==='select'){
-    const i=cards.findIndex(r=>inside(p,r));
-    if(i>=0){selected=i;advance();}else advance();
   }else advance();
 });
 canvas.addEventListener('pointermove',e=>{
   if(pointers.has(e.pointerId))pointers.set(e.pointerId,point(e).x<W/2?-1:1);
 });
 for(const event of ['pointerup','pointercancel','lostpointercapture'])
-  canvas.addEventListener(event,e=>pointers.delete(e.pointerId));
+  canvas.addEventListener(event,e=>{pointers.delete(e.pointerId);firePointers.delete(e.pointerId);});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 window.addEventListener('blur',()=>{clearInput();if(state==='play')paused=true;});
 document.addEventListener('visibilitychange',()=>{if(document.hidden){clearInput();if(state==='play')paused=true;}});
@@ -223,9 +222,9 @@ const BOSS_ARM=[[550,298],[493,277],[463,244],[435,171],[421,151],[408,144],
  [254,324],[260,334],[275,337],[314,323],[294,380],[303,388],[318,383],
  [338,365],[354,364],[357,400],[380,460],[407,506],[454,547],[514,514],
  [557,447],[575,368]];
-const boss={x:950,feet:390,w:224,h:269,face:1,t:0,wait:1.5,active:false,
+const boss={x:950,feet:390,w:224,h:PLAYER_H,face:1,t:0,wait:1.5,active:false,
  aimX:640,shots:0};
-function resetBoss(){Object.assign(boss,{x:950,t:0,wait:1.5,active:false,aimX:640,shots:0,face:1});}
+function resetBoss(){Object.assign(boss,{x:950,feet:405,w:PLAYER_H*1145/1374,h:PLAYER_H,t:0,wait:1.5,active:false,aimX:640,shots:0,face:1});}
 function smooth(t){t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);}
 function bossPose(){
  const t=boss.active?boss.t:0;
@@ -248,7 +247,7 @@ function bossHand(){
 }
 function throwOne(){
  const hand=bossHand();
- const flight=difficulty===2?0.68:0.85,gravity=440;
+ const flight=[1.2,0.85,0.68][difficulty],gravity=440;
  const offset=(boss.shots%2===0?-1:1)*(difficulty===2?55:35);
  const target=Math.max(80,Math.min(W-80,boss.aimX+offset));
  items.push({kind:'1',x:hand.x,y:hand.y,vx:(target-hand.x)/flight,
@@ -259,17 +258,17 @@ function throwOne(){
 function updateBoss(dt){
  if(!boss.active){
   boss.wait-=dt;
-  const destination=640+Math.sin(elapsed*0.55)*340;
+  const destination=950+Math.sin(elapsed*0.7)*150;
   boss.x+=Math.max(-100*dt,Math.min(100*dt,destination-boss.x));
   boss.face=player.x<boss.x?1:-1;
   if(boss.wait<=0){boss.active=true;boss.t=0;boss.shots=0;boss.aimX=player.x;}
   return;
  }
- boss.t+=dt;
- const count=difficulty===2?3:2;
+ boss.t+=dt*(difficulty===0?0.65:1);
+ const count=DIFFICULTIES[difficulty].series;
  // Cel zostaje ustalony podczas zamachu. Jedynki nie śledzą gracza w locie.
  while(boss.shots<count&&boss.t>=0.52+boss.shots*0.13)throwOne();
- if(boss.t>=1.04){boss.active=false;boss.wait=difficulty===2?0.10:0.32;}
+ if(boss.t>=1.04){boss.active=false;boss.wait=[1.1,0.32,0.10][difficulty];}
 }
 function bossPath(points){ctx.moveTo(points[0][0],points[0][1]);for(const p of points.slice(1))ctx.lineTo(p[0],p[1]);ctx.closePath();}
 function drawBoss(){
@@ -292,7 +291,7 @@ function drawBoss(){
   ctx.fillStyle='#e8ae8b';ctx.beginPath();ctx.arc(650,245,155,0,Math.PI*2);ctx.fill();
  }
  ctx.restore();
- panel(boss.x-95,100,190,34,'rgba(72,23,32,.94)');text('PAN D',boss.x,117,22,'#ffda62');
+ nameBadge('PAN D',boss.x,boss.feet-boss.h-36);
  if(boss.active&&boss.t<0.52){
   const hand=bossHand();text('!',hand.x,hand.y-27,36,'#ffda62');
   ctx.save();ctx.strokeStyle='rgba(255,100,90,.55)';ctx.lineWidth=2;ctx.setLineDash([7,8]);
@@ -303,6 +302,7 @@ function drawBoss(){
 // SPAWNER — w klasie 3 sprawdziany zastępują część jedynek.
 function spawn(kind,fromSeries=false){
   const cfg=LEVELS[level];
+  if(level===4&&kind!=='logo')return;
   if(level===3){
     if(kind&&kind!=='5'&&kind!=='logo')return;
     kind=kind||'5';
@@ -315,9 +315,197 @@ function spawn(kind,fromSeries=false){
     vx:diagonal?(Math.random()<0.5?-1:1)*cfg.speed*0.45:0,
     vy:kind==='logo'?145:cfg.speed,phase:Math.random()*Math.PI*2,reflected:false,warning:kind==='exam'?EXAM_WARNING:0});
 }
-function size(o){return o.kind==='exam'?{w:200,h:84}:o.kind==='logo'?{w:58,h:70}:{w:54,h:70};}
+function size(o){return o.kind==='exam'?{w:150,h:64}:o.kind==='logo'?{w:58,h:70}:{w:54,h:70};}
 function burst(x,y,color){
   for(let i=0;i<12;i++)sparks.push({x,y,vx:(Math.random()-.5)*220,vy:-Math.random()*190,life:.5,color});
+}
+
+
+// DAMIAN — nauczyciel wspierający ucznia w klasach 2–4.
+const teacher={x:240,feet:405,h:PLAYER_H,dir:1,walkDir:1,moving:false,wait:3,t:0,active:false,released:false,aimX:640};
+const finalShot={t:0,active:false,released:false,cooldown:0};
+let friendly=[],students=[],studentIn=0.8,fx=[];
+function resetTeacher(){Object.assign(teacher,{x:240,walkDir:1,moving:false,wait:3,t:0,active:false,released:false,dir:1});}
+function resetFinal(){fx=[];friendly=[];students=[];studentIn=0.8;Object.assign(finalShot,{t:0,active:false,released:false,cooldown:0});}
+function damianPose(t,active){
+  if(!active)return 0;
+  if(t<0.18)return -0.10*smooth(t/0.18);
+  if(t<0.28)return -0.10+0.24*smooth((t-0.18)/0.10);
+  return 0.14*(1-smooth((t-0.28)/0.22));
+}
+function damianHand(x,feet,h,dir,t,active){
+  // Dłoń z markerem w jedynej klatce Damiana; ten sam obrót co na ekranie.
+  const p=rotatePoint(h*0.15,-h*0.50,0,0,damianPose(t,active));
+  return {x:x+dir*p.x,y:feet+p.y};
+}
+function nameBadge(label,x,y){
+  panel(x-70,y,140,28,'rgba(9,19,39,.94)');text(label,x,y+14,18,'#ffda62');
+}
+function drawDamian(x,feet,h,dir,t,active,isPlayer=false){
+  const moving=isPlayer?player.moving:teacher.moving;
+  const bob=moving&&!active?Math.sin(clock*16)*3:0;
+  const tilt=damianPose(t,active)+(moving&&!active?Math.sin(clock*8)*0.025:0);
+  nameBadge('DAMIAN',x,feet-h-36);
+  feet+=bob;
+  ctx.save();ctx.translate(x,feet);ctx.scale(dir,1);ctx.rotate(tilt);
+  if(isPlayer&&invulnerable>0)ctx.globalAlpha=Math.sin(clock*35)>0?0.4:1;
+  if(isPlayer&&boost>0){ctx.shadowColor='#ffda62';ctx.shadowBlur=24;}
+  if(isPlayer&&player.red>0)ctx.filter='sepia(1) saturate(8) hue-rotate(315deg)';
+  if(moving&&!active){
+    // Dwie nogi kołyszą się przeciwnie; tułów zakrywa połączenie w biodrach.
+    for(const side of [-1,1]){
+      ctx.save();ctx.translate(side*h*.035,-h*.39);ctx.rotate(Math.sin(clock*16)*side*.08);
+      ctx.translate(-side*h*.035,h*.39);ctx.beginPath();
+      ctx.rect(side===-1?-h/2:0,-h*.43,h/2,h*.46);ctx.clip();
+      picture('damian',-h/2,-h,h,h);ctx.restore();
+    }
+    ctx.save();ctx.beginPath();ctx.rect(-h/2,-h,h,h*.64);ctx.clip();
+    picture('damian',-h/2,-h,h,h);ctx.restore();
+  }else picture('damian',-h/2,-h,h,h);
+  ctx.restore();
+  if(active&&t<0.24){
+    const hand=damianHand(x,feet,h,dir,t,active);
+    text('5',hand.x,hand.y,27,'#60e473');
+  }
+}
+function updateTeacher(dt){
+  if(!teacher.active){
+    teacher.moving=true;teacher.x+=teacher.walkDir*90*dt;
+    if(teacher.x>540){teacher.x=540;teacher.walkDir=-1;}
+    if(teacher.x<150){teacher.x=150;teacher.walkDir=1;}
+    teacher.dir=teacher.walkDir;
+    teacher.wait-=dt;
+    if(teacher.wait<=0){teacher.active=true;teacher.t=0;teacher.released=false;
+      teacher.moving=false;teacher.aimX=player.x;teacher.dir=player.x<teacher.x?-1:1;}
+    return;
+  }
+  teacher.t+=dt;
+  if(!teacher.released&&teacher.t>=0.24){
+    const hand=damianHand(teacher.x,teacher.feet,teacher.h,teacher.dir,teacher.t,true);
+    const flight=1.1,gravity=440;
+    items.push({kind:'5',x:hand.x,y:hand.y,vx:(teacher.aimX-hand.x)/flight,
+      vy:(FLOOR-PLAYER_H/2-hand.y-0.5*gravity*flight*flight)/flight,
+      gravity,thrown:true,gift:true,phase:0,warning:0,reflected:false});
+    teacher.released=true;sound('ding');
+  }
+  if(teacher.t>=0.5){teacher.active=false;teacher.wait=[4,5,6][difficulty];}
+}
+function drawTeacher(){
+  drawDamian(teacher.x,teacher.feet,teacher.h,teacher.dir,teacher.t,teacher.active);
+
+}
+
+// KLASA 5 — uczniowie są celami, piątki pociskami nauczyciela.
+// Pociski mają mały rozmiar, ale zderzenia badają cały odcinek lotu w klatce.
+function hitSegment(x1,y1,x2,y2,left,top,right,bottom){
+  let near=0,far=1;
+  for(const [a,b,lo,hi] of [[x1,x2,left,right],[y1,y2,top,bottom]]){
+    const d=b-a;
+    if(Math.abs(d)<1e-9){if(a<lo||a>hi)return false;continue;}
+    let t0=(lo-a)/d,t1=(hi-a)/d;
+    if(t0>t1)[t0,t1]=[t1,t0];near=Math.max(near,t0);far=Math.min(far,t1);
+    if(near>far)return false;
+  }
+  return true;
+}
+function spawnStudent(){
+  const dir=Math.random()<0.5?1:-1;
+  students.push({x:dir===1?-65:W+65,feet:Math.random()<0.5?240:320,
+    dir,speed:[78,100,125][difficulty],passed:false,flash:0});
+}
+function aimStudent(){
+  let target=null,bestDistance=240;
+  for(const s of students){
+    const d=Math.abs(s.x-player.x);
+    if(!s.passed&&s.x>30&&s.x<W-30&&d<bestDistance){target=s;bestDistance=d;}
+  }
+  return target;
+}
+function pop(x,y,label,color='#ffda62'){fx.push({x,y,label,color,life:0.8,maxLife:0.8});}
+function awardStudent(s){
+  s.passed=true;s.flash=0.8;fives++;combo++;const points=100+Math.min(combo-1,5)*20;score+=points;
+  sound('ding');burst(s.x,s.feet-60,'#60e473');pop(s.x,s.feet-90,'+'+points,'#60e473');
+  if(fives>=LEVELS[level].target)finishLevel();
+}
+function updateFinal(dt){
+  finalShot.cooldown=Math.max(0,finalShot.cooldown-dt);
+  if(!finalShot.active&&finalShot.cooldown===0&&(keys.has(' ')||firePointers.size)){
+    finalShot.active=true;finalShot.t=0;finalShot.released=false;
+  }
+  if(finalShot.active){
+    finalShot.t+=dt;
+    if(!finalShot.released&&finalShot.t>=0.24){
+      const hand=damianHand(player.x,FLOOR,PLAYER_H,player.dir,finalShot.t,true);
+      const target=aimStudent();
+      const dx=target?target.x-hand.x:0,dy=target?target.feet-55-hand.y:-500;
+      const length=Math.hypot(dx,dy)||1;
+      friendly.push({x:hand.x,y:hand.y,oldX:hand.x,oldY:hand.y,vx:dx/length*620,vy:dy/length*620,target,trail:[]});
+      burst(hand.x,hand.y,'#60e473');
+      finalShot.released=true;sound('throw');
+    }
+    if(finalShot.t>=0.5){finalShot.active=false;finalShot.cooldown=0.02;}
+  }
+  studentIn-=dt;
+  if(studentIn<=0){spawnStudent();studentIn+=[2.2,1.8,1.5][difficulty];}
+  for(const s of students){s.oldX=s.x;s.x+=s.dir*s.speed*dt;s.flash=Math.max(0,s.flash-dt);}
+  students=students.filter(s=>s.x>-110&&s.x<W+110);
+  for(let i=friendly.length-1;i>=0;i--){
+    const shot=friendly[i];shot.oldX=shot.x;shot.oldY=shot.y;
+    shot.trail=shot.trail||[];shot.trail.unshift({x:shot.x,y:shot.y});shot.trail.length=Math.min(shot.trail.length,9);
+    if(shot.target&&!shot.target.passed&&students.includes(shot.target)){
+      const dx=shot.target.x-shot.x,dy=shot.target.feet-55-shot.y,length=Math.hypot(dx,dy)||1;
+      const blend=1-Math.exp(-12*dt);
+      shot.vx=((shot.vx||0)*(1-blend)+dx/length*620*blend);
+      shot.vy=shot.vy*(1-blend)+dy/length*620*blend;
+    }
+    shot.x+=(shot.vx||0)*dt;shot.y+=shot.vy*dt;
+    let used=false;
+    for(let j=items.length-1;j>=0;j--){
+      const o=items[j];if(o.kind!=='1'||o.reflected)continue;
+      // Ruch względny obu pocisków zapobiega przenikaniu przy małej liczbie FPS.
+      const nextX=o.x+o.vx*dt,nextY=o.y+(o.vy+(o.gravity||0)*dt)*dt;
+      if(hitSegment(shot.oldX-o.x,shot.oldY-o.y,shot.x-nextX,shot.y-nextY,-39,-44,39,44)){
+        items.splice(j,1);score+=20;burst(o.x,o.y,'#ffda62');pop(o.x,o.y,'ODBICIE +20');sound('clang');used=true;break;
+      }
+    }
+    if(!used)for(const s of students){
+      if(s.passed)continue;
+      if(hitSegment(shot.oldX-s.oldX,shot.oldY,shot.x-s.x,shot.y,-32,s.feet-102,32,s.feet)){
+        used=true;awardStudent(s);break;
+      }
+    }
+    if(used||shot.y<-40||shot.y>H+60||shot.x<-60||shot.x>W+60)friendly.splice(i,1);
+    if(state!=='play')return;
+  }
+}
+function drawFinal(){
+  // Dwie czytelne ścieżki uczniów; zielona etykieta oznacza już ocenionego.
+  ctx.save();ctx.strokeStyle='rgba(255,255,255,.28)';ctx.lineWidth=2;
+  for(const y of [240,320]){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+  ctx.restore();
+  const target=aimStudent();
+  for(const s of students){
+    if(s===target){ctx.save();ctx.strokeStyle='#ffda62';ctx.lineWidth=3;ctx.beginPath();ctx.ellipse(s.x,s.feet-55,39,64,0,0,Math.PI*2);ctx.stroke();ctx.restore();}
+    ctx.save();ctx.translate(s.x,s.feet+Math.sin(clock*13+s.x*.01)*2);ctx.scale(s.dir,1);
+    ctx.rotate(Math.sin(clock*6+s.x*.01)*0.025);
+    if(s.flash>0){const pulse=1+0.12*Math.sin(Math.PI*s.flash/.8);ctx.scale(pulse,pulse);}
+    if(s.passed){ctx.shadowColor='#60e473';ctx.shadowBlur=12;}
+    picture('uczen',-55,-110,110,110);ctx.restore();
+    panel(s.x-30,s.feet-132,60,23,s.passed?'#216b38':'#253551');
+    text(s.passed?'5 ✓':s===target?'CEL':'?',s.x,s.feet-120,18,s.passed?'#8bff9d':'#fff');
+  }
+  for(const shot of friendly){
+    drawTrail(shot,'#60e473');
+    ctx.save();ctx.shadowColor='#60e473';ctx.shadowBlur=14;
+    ctx.font='900 36px Arial,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.strokeText('5',shot.x,shot.y);text('5',shot.x,shot.y,36,'#2ecc40');ctx.restore();
+  }
+  const hand=damianHand(player.x,FLOOR,PLAYER_H,player.dir,finalShot.t,finalShot.active);
+  if(target&&!paused){
+    ctx.save();ctx.strokeStyle='rgba(255,218,98,.32)';ctx.setLineDash([5,10]);
+    ctx.beginPath();ctx.moveTo(hand.x,hand.y);ctx.lineTo(target.x,target.feet-55);ctx.stroke();ctx.restore();
+  }
+
 }
 
 // PLAYER — fizyka niezależna od liczby klatek; hitbox to 60% sprite'a.
@@ -344,26 +532,30 @@ function collides(o){
 function collect(o){
   if(o.kind==='logo'){boost=BOOST_TIME;sound('powerup');burst(player.x,FLOOR-80,'#ffda62');return;}
   if(o.kind==='5'){
-    fives++;combo++;score+=100+Math.min(combo-1,5)*20;player.green=.15;sound('ding');burst(o.x,o.y,'#2ecc40');
+    if(level===4)return;
+    fives++;combo++;const gain=100+Math.min(combo-1,5)*20;score+=gain;pop(o.x,o.y,'+'+gain,'#60e473');player.green=.15;sound('ding');burst(o.x,o.y,'#2ecc40');
     if(fives>=LEVELS[level].target)finishLevel();
   }else{
     if(invulnerable>0)return;
-    ones++;combo=0;invulnerable=INVULNERABLE;player.red=.3;shake=.22;
+    ones++;combo=0;pop(player.x,FLOOR-PLAYER_H,'TRAFIENIE','#ff7975');invulnerable=INVULNERABLE;player.red=.3;shake=.22;
     if(ones===2)announce('Zagrożenie! Jeszcze jedna jedynka i poprawka.');
     player.knock=(player.x>=o.x?1:-1)*450;sound('buzz');burst(o.x,o.y,'#e5322d');
     if(ones===3)failLevel('Trzy jedynki — czas na poprawkę.');
   }
 }
 function update(dt){
+  for(const f of fx)f.life-=dt;fx=fx.filter(f=>f.life>0);
   invulnerable=Math.max(0,invulnerable-dt);noticeTime=Math.max(0,noticeTime-dt);
   updatePlayer(dt);boost=Math.max(0,boost-dt);shake=Math.max(0,shake-dt);
   const old=Math.floor(elapsed);elapsed+=dt;score+=Math.floor(elapsed)-old;
-  if(elapsed>=LEVELS[level].time){failLevel('Koniec czasu! Nie udało się zebrać wymaganych piątek.');return;}
-  if(level===3)updateBoss(dt);
+  if(elapsed>=LEVELS[level].time){failLevel(level===4?'Koniec czasu! Nie wszyscy uczniowie otrzymali piątkę.':'Koniec czasu! Nie udało się zebrać wymaganych piątek.');return;}
+  if(level>=3)updateBoss(dt);
+  if(level>=1&&level<=3)updateTeacher(dt);
   if(examQueue>0){examIn-=dt;if(examIn<=0){spawn('exam',true);examQueue--;examIn+=0.55;}}
   spawnIn-=dt;boostIn-=dt;
-  if(spawnIn<=0){spawn();spawnIn+=LEVELS[level].interval;}
+  if(level!==4&&spawnIn<=0){spawn();spawnIn+=LEVELS[level].interval;}
   if(boostIn<=0){spawn('logo');boostIn+=BOOST_EVERY;}
+  if(level===4){updateFinal(dt);if(state!=='play')return;}
   for(let i=items.length-1;i>=0;i--){
     const o=items[i];
     // Sprawdzian czeka nieruchomo na końcu ostrzeżenia; nie ma jeszcze kolizji.
@@ -372,6 +564,7 @@ function update(dt){
       const dx=player.x-o.x,dy=FLOOR-PLAYER_H/2-o.y,dist=Math.hypot(dx,dy);
       if(dist<MAGNET){const speed=650;o.vx=dx/Math.max(dist,1)*speed;o.vy=dy/Math.max(dist,1)*speed;}
     }
+    if(o.thrown){o.trail=o.trail||[];o.trail.unshift({x:o.x,y:o.y});o.trail.length=Math.min(o.trail.length,8);}
     if(o.thrown&&!o.reflected)o.vy+=o.gravity*dt;
     o.x+=o.vx*dt;o.y+=o.vy*dt;
     const half=size(o).w/2;
@@ -384,8 +577,8 @@ function update(dt){
       }else{items.splice(i,1);collect(o);if(state!=='play')return;}
     }else if(o.kind==='5'&&o.y-size(o).h/2>FLOOR){
       // Piątka minęła stopy — odejmujemy postęp tylko raz, bez wartości ujemnych.
-      fives=Math.max(0,fives-1);items.splice(i,1);
-      announce('Uciekła piątka! −1 do postępu klasy.');
+      if(!o.gift){fives=Math.max(0,fives-1);announce('Uciekła piątka! −1 do postępu klasy.');}
+      items.splice(i,1);
     }else if(o.x<-150||o.x>W+150||o.y>H+120||(o.reflected&&o.y<-120))items.splice(i,1);
   }
   for(const p of sparks){p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=300*dt;}
@@ -413,6 +606,7 @@ function background(){
   ctx.restore();if(level>=2){ctx.fillStyle='rgba(25,63,133,.27)';ctx.fillRect(0,0,W,H);}
 }
 function drawPlayer(){
+  if(level===4){drawDamian(player.x,FLOOR,PLAYER_H,player.dir,finalShot.t,finalShot.active,true);return;}
   const w=playerWidth(),bounce=player.moving?Math.sin(clock*19)*4:0;
   ctx.save();ctx.translate(player.x,FLOOR+bounce);
   ctx.rotate(player.moving?player.dir*8*Math.PI/180:0);
@@ -426,7 +620,24 @@ function drawPlayer(){
   if(player.green>0)ctx.filter='sepia(1) saturate(4) hue-rotate(65deg)';
   picture(selected?'damian':'uczen',-w/2,-PLAYER_H,w,PLAYER_H);ctx.restore();
 }
+function drawTrail(o,color){
+  if(!o.trail||o.trail.length<2)return;
+  ctx.save();ctx.lineCap='round';
+  for(let i=1;i<o.trail.length;i++){
+    ctx.globalAlpha=(1-i/o.trail.length)*0.5;ctx.strokeStyle=color;ctx.lineWidth=(1-i/o.trail.length)*9;
+    ctx.beginPath();ctx.moveTo(o.trail[i-1].x,o.trail[i-1].y);ctx.lineTo(o.trail[i].x,o.trail[i].y);ctx.stroke();
+  }ctx.restore();
+}
+function drawEffects(){
+  for(const f of fx){
+    ctx.save();ctx.globalAlpha=Math.min(1,f.life*3);
+    text(f.label,f.x,f.y-(1-f.life/f.maxLife)*45,24,f.color);
+    ctx.strokeStyle=f.color;ctx.lineWidth=2;ctx.globalAlpha=f.life/f.maxLife*0.5;
+    ctx.beginPath();ctx.arc(f.x,f.y,12+(1-f.life/f.maxLife)*48,0,Math.PI*2);ctx.stroke();ctx.restore();
+  }
+}
 function drawItem(o){
+  drawTrail(o,o.kind==='5'?'#60e473':'#ff5a50');
   if(o.warning>0){
     ctx.save();ctx.globalAlpha=0.75+0.25*Math.sin(clock*20);
     const x=Math.max(105,Math.min(W-105,o.x));
@@ -437,7 +648,7 @@ function drawItem(o){
   if(o.kind==='logo'){
     ctx.shadowColor='#ffd65a';ctx.shadowBlur=18+8*Math.sin(clock*5);logo(0,-35,70);
   }else if(o.kind==='exam'){
-    panel(-100,-42,200,84,'#fff');text('SPRAWDZIAN',0,-14,21,'#182437');text('NIEZAL.',0,17,25,'#e5322d');
+    panel(-75,-32,150,64,'#fff');text('SPRAWDZIAN',0,-11,16,'#182437');text('NIEZAL.',0,14,20,'#e5322d');
   }else{
     ctx.font='900 64px Arial,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.shadowColor='rgba(0,0,0,.4)';ctx.shadowBlur=6;ctx.shadowOffsetY=3;
@@ -448,14 +659,14 @@ function drawItem(o){
 function drawHUD(){
   panel(0,0,W,92,'rgba(8,17,34,.91)');
   text('KLASA '+(level+1),24,30,26,'#ffda62','left');
-  text('Piątki '+fives+' / '+LEVELS[level].target,220,30,25,'#60e473','left');
-  text('Jedynki '+('●'.repeat(ones)+'○'.repeat(3-ones)),470,30,25,'#ff7975','left');
+  text((level===4?'Uczniowie ':'Piątki ')+fives+' / '+LEVELS[level].target,220,30,25,'#60e473','left');
+  text((level===4?'Trafienia ':'Jedynki ')+('●'.repeat(ones)+'○'.repeat(3-ones)),470,30,25,'#ff7975','left');
   text('Punkty: '+score,760,30,26,'#fff','left');
-  text(boost>0?'TARCZA + MAGNES':'BOOSTER',24,70,16,'#ffda62','left');
+  text(boost>0?(level===4?'TARCZA':'TARCZA + MAGNES'):'BOOSTER',24,70,16,'#ffda62','left');
   ctx.fillStyle='#344054';ctx.fillRect(220,61,500,14);
   ctx.fillStyle='#ffda62';ctx.fillRect(220,61,500*boost/BOOST_TIME,14);
   text(boost>0?boost.toFixed(1)+' s':'Złap logo szkoły',745,69,17,'#c8d5e8','left');
-  text('Seria: '+combo+' · następna 5: +'+(100+Math.min(combo,5)*20),920,70,15,'#7ced8b','left');
+  text(level===4?'RZUT: piątka do ucznia z napisem CEL':'Seria: '+combo+' · następna 5: +'+(100+Math.min(combo,5)*20),920,70,15,'#7ced8b','left');
   panel(pauseBox.x,pauseBox.y,pauseBox.w,pauseBox.h);text('Ⅱ',1141,41,27);
 }
 function button(label,y=600){panel(390,y-28,500,56,'#d7b14d');text(label,W/2,y,24,'#101b30');}
@@ -466,6 +677,11 @@ function drawUI(){
     drawHUD();
     panel(14,654,320,50);
     text('Czas: '+Math.max(0,Math.ceil(LEVELS[level].time-elapsed))+' s',174,679,23,LEVELS[level].time-elapsed<=10?'#ff7975':'#ffda62');
+    if(level===4){
+      if(elapsed<8)text('Podejdź pod ucznia z CEL-em · przytrzymaj RZUT · unikaj jedynek',670,680,17,'#ffda62');
+      panel(fireBox.x,fireBox.y,fireBox.w,fireBox.h,firePointers.size?'#307940':'#1c5930');
+      text('RZUT 5 · SPACJA',1135,669,23,'#fff');
+    }
     if(noticeTime>0){panel(300,175,680,48);text(notice,640,199,21,'#ffda62');}
     if(paused){panel(290,240,700,230);text('PAUZA',640,300,48,'#ffda62');text('P / Enter / dotknij, aby wrócić',640,370,25);}
   }else{
@@ -477,7 +693,7 @@ function drawUI(){
       text('Zbieraj zielone 5 — osiągnij cel przed końcem czasu.',640,338,25,'#7ced8b');
       text('Unikaj czerwonych 1 — trzy jedynki to powtórka.',640,393,25,'#ff9690');
       text('Logo = 3 s tarczy · przepuszczona piątka: −1.',640,448,25,'#ffda62');
-      text('Wybierz trudność na następnym ekranie',640,525,24,'#ffda62');
+      text('Pięć klas — w finale grasz nauczycielem',640,525,24,'#ffda62');
       text('Piątki w serii: +100 do +200 pkt · jedynka zeruje serię',640,558,18,'#c3d0e2');
       button('Naciśnij Enter / dotknij ekranu');
       text('← → lub A/D: ruch · P: pauza · R: restart · M: dźwięk',640,664,20,'#c3d0e2');
@@ -489,26 +705,34 @@ function drawUI(){
         panel(r.x,r.y,r.w,r.h,i===difficulty?'#34466c':'#14233d');
         ctx.strokeStyle=i===difficulty?'#ffda62':'#697995';ctx.lineWidth=4;ctx.strokeRect(r.x,r.y,r.w,r.h);
         text(d.name,r.x+r.w/2,r.y+48,34,i===difficulty?'#ffda62':'#fff');
-        text('Piątki: '+d.targets.join(' / '),r.x+r.w/2,r.y+110,19);
-        text('Czas: '+d.times.join(' / ')+' s',r.x+r.w/2,r.y+151,18);
-        text(['Wolniej, więcej piątek','Dotychczasowy balans','Szybciej, dłuższe serie'][i],r.x+r.w/2,r.y+208,19,'#cbd7e7');
-      });text('Pan D w Klasie 4: tylko Normalny i Trudny',640,560,21,'#ffda62');button('Enter — zaczynamy',610);
-    }else if(state==='select'){
-      text(level===1?'Odblokowano: nauczyciel dołącza do gry!':(level===3?'Klasa 4: Pan D — finał!':'Wybierz postać przed Klasą 3'),640,132,38,'#ffda62');
-      text('Klasa '+(level+1)+' · ← → i Enter lub dotknij karty',640,195,25);
-      cards.forEach((r,i)=>{
-        panel(r.x,r.y,r.w,r.h,i===selected?'#34466c':'#14233d');
-        ctx.strokeStyle=i===selected?'#ffda62':'#697995';ctx.lineWidth=4;ctx.strokeRect(r.x,r.y,r.w,r.h);
-        picture(i?'damian':'uczen',r.x+45,r.y+15,210,210);
-        text(i?'Damian':'Uczeń',r.x+150,r.y+266,30,i===selected?'#ffda62':'#fff');
-      });
-      if(level===3)text('Unikaj rzutów Pana D. Zbieraj piątki — tarcza odbija pociski!',640,587,21,'#ffda62');
-      button('Enter — zaczynamy',635);
+        text('Klasy 1–4: '+d.targets.slice(0,4).join(' / '),r.x+r.w/2,r.y+102,17);
+        text('Finał: '+d.targets[4]+' uczniów',r.x+r.w/2,r.y+134,20);
+        text('Czas finału: '+d.times[4]+' s',r.x+r.w/2,r.y+169,18);
+        text(['Wolniej, więcej piątek','Wyważone tempo','Szybciej, dłuższe serie'][i],r.x+r.w/2,r.y+208,19,'#cbd7e7');
+      });text('Pięć klas · Damian pomaga · Pan D w każdym trybie',640,560,21,'#ffda62');button('Enter — zaczynamy',610);
+    }else if(state==='briefing'){
+      const final=level===4;
+      text(final?'Klasa 5 — Ostatni dzwonek!':'Klasa '+(level+1),640,132,42,'#ffda62');
+      picture(final?'damian':'uczen',160,235,250,250);
+      text(final?'Grasz Damianem — nauczycielem':'Grasz uczniem',815,250,29);
+      const lines=final?
+        ['Rzucaj piątki: przytrzymaj Spację lub RZUT.',
+         'Podejdź pod ucznia — złota obwódka wskazuje cel.',
+         'Piątka poleci do niego. Unikaj rzutów Pana D.',
+         'Zbijaj jedynki Pana D własnymi piątkami.']:
+        ['Zbieraj piątki i unikaj jedynek.',
+         'Damian pomaga: patroluje i rzuca Ci piątki.',
+         level===3?'Pan D celuje w Ciebie — unikaj jego rzutów.':'Trzy jedynki oznaczają powtórkę klasy.',
+         'Piątki od Damiana nie karzą za nieudany chwyt.'];
+      lines.forEach((line,i)=>text(line,815,315+i*44,21,'#d2dfed'));
+      text(final?'Cel: '+LEVELS[level].target+' uczniów w '+LEVELS[level].time+' s':
+        'Cel: '+LEVELS[level].target+' piątek w '+LEVELS[level].time+' s',640,550,26,'#ffda62');
+      button('Enter / dotknij — zaczynamy',620);
     }else if(state==='win'){
       panel(220,95,840,540,'rgba(248,242,220,.97)');logo(640,115,75);
       text('ZDAŁEŚ!',640,242,55,'#162743');
-      text('Świadectwo z wyróżnieniem',640,306,35,'#162743');
-      text('ZSZ im. Jana Ruszkowskiego w Pułtusku',640,360,24,'#44506a');
+      text('Pięć klas — misja ukończona!',640,306,35,'#162743');
+      text('Świadectwo z wyróżnieniem · ZSZ w Pułtusku',640,360,24,'#44506a');
       if(retried)text('Poprawka zaliczona!',640,395,22,'#317844');
       text('Wynik: '+score,640,435,34,'#162743');
       text('Rekord ('+DIFFICULTIES[difficulty].name+'): '+best,640,488,25,'#44506a');button('Od nowa',570);
@@ -530,8 +754,10 @@ function render(){
   if(shake>0&&state==='play'&&!paused)ctx.translate((Math.random()-.5)*12,(Math.random()-.5)*12);
   background();
   if(state==='play'){
-    if(level===3)drawBoss();
-    items.forEach(drawItem);drawPlayer();
+    if(level>=3)drawBoss();
+    if(level>=1&&level<=3)drawTeacher();
+    if(level===4)drawFinal();
+    items.forEach(drawItem);drawPlayer();drawEffects();
     for(const p of sparks){ctx.globalAlpha=p.life/.5;ctx.fillStyle=p.color;ctx.fillRect(p.x,p.y,5,5);}ctx.globalAlpha=1;
   }
   ctx.restore();drawUI();
