@@ -25,22 +25,23 @@ canvas{display:block;width:100%;height:100%;touch-action:none}
 const BASE_LEVELS = [
   {target:12, time:35, speed:168, interval:0.8925, good:0.60, diagonal:0,    exam:0,    brightness:1},
   {target:16, time:40, speed:246, interval:0.7225, good:0.50, diagonal:0.35, exam:0,    brightness:0.85},
-  {target:16, time:60, speed:324, interval:0.5950, good:0.40, diagonal:0.70, exam:0.35, brightness:0.85}
+  {target:16, time:60, speed:324, interval:0.5950, good:0.40, diagonal:0.70, exam:0.35, brightness:0.85},
+  {target:20, time:55, speed:350, interval:1.0, good:1, diagonal:0.30, exam:0, brightness:0.80}
 ];
 // WYBÓR TRUDNOŚCI — normalny zachowuje dotychczasowy balans.
 const DIFFICULTIES=[
   {name:'Łatwy',key:'easy',targets:[8,12,12],times:[50,60,75],speed:0.8,interval:1.1,good:0.10,series:1},
-  {name:'Normalny',key:'normal',targets:[12,16,16],times:[35,40,60],speed:1,interval:1,good:0,series:2},
-  {name:'Trudny',key:'hard',targets:[14,18,20],times:[35,40,50],speed:1.1,interval:0.9,good:0,series:3}
+  {name:'Normalny',key:'normal',targets:[12,16,16,20],times:[35,40,60,55],speed:1,interval:1,good:0,series:2},
+  {name:'Trudny',key:'hard',targets:[14,18,20,24],times:[35,40,50,50],speed:1.1,interval:0.9,good:0,series:3}
 ];
 let difficulty=1;
 let LEVELS=BASE_LEVELS.map(x=>({...x}));
 const sessionBests=[0,0,0];
-function recordKey(){return difficulty===1?'ruszkowski-hard-v1':'ruszkowski-difficulty-v1-'+DIFFICULTIES[difficulty].key;}
+function recordKey(){return difficulty===0?'ruszkowski-difficulty-v1-easy':'ruszkowski-pan-d-v1-'+DIFFICULTIES[difficulty].key;}
 function applyDifficulty(){
   const d=DIFFICULTIES[difficulty];
-  LEVELS=BASE_LEVELS.map((x,i)=>({...x,target:d.targets[i],time:d.times[i],
-    speed:x.speed*d.speed,interval:x.interval*d.interval,good:x.good+d.good}));
+  LEVELS=BASE_LEVELS.slice(0,d.targets.length).map((x,i)=>({...x,target:d.targets[i],time:d.times[i],
+    speed:x.speed*d.speed,interval:x.interval*d.interval,good:Math.min(1,x.good+d.good)}));
   best=readBest();
 }
 const W=1280, H=720, FLOOR=H*0.85, PLAYER_H=H*0.22;
@@ -64,9 +65,25 @@ window.addEventListener('resize',resize); resize();
 
 // ASSETS — brak obrazu nigdy nie blokuje startu gry.
 const assets={};
-for(const name of ['damian','uczen','logo','bg']){
-  const img=new Image(); assets[name]=img;
-  img.src='./assets/'+name+'.png';
+// GitHub Pages rozróżnia wielkość liter. Najpierw sprawdzamy nazwę docelową,
+// potem typowe warianty eksportu — bez fetch, również dla file://.
+const assetFiles={
+  damian:['damian.png','damian.png.png','Damian.png','damian.PNG'],
+  uczen:['uczen.png','uczen.png.png','Uczen.png','uczen.PNG','uczeń.png','Uczeń.png'],
+  logo:['logo.png','logo.png.png','Logo.png','logo.PNG','Logo.PNG'],
+  pand:['pan-d.png','pan_d.png','pand.png','lukasz.png'],
+  bg:['bg.png','bg.png.png','Bg.png','bg.PNG']
+};
+for(const [name,files] of Object.entries(assetFiles)){
+  const paths=['assets','Assets'].flatMap(folder=>files.map(file=>'./'+folder+'/'+file));
+  const img=new Image();assets[name]=img;
+  let attempt=0;
+  img.onerror=()=>{
+    if(attempt<paths.length)img.src=paths[attempt++];
+    else console.warn('Nie znaleziono grafiki '+name+'. Sprawdź pliki w assets/.');
+  };
+  img.onload=()=>{img.onerror=null;};
+  img.src=paths[attempt++];
 }
 function ready(img){return img&&img.complete&&img.naturalWidth>0;}
 function picture(name,x,y,w,h){
@@ -96,6 +113,7 @@ function startLevel(){
   combo=0;invulnerable=0;notice='';noticeTime=0;
   spawnIn=0.8;boostIn=BOOST_FIRST;items=[];sparks=[];shake=0;
   Object.assign(player,{x:W/2,dir:1,moving:false,red:0,green:0,knock:0});
+  resetBoss();
   paused=false;clearInput();state='play';
 }
 function newGame(){applyDifficulty();retried=false;level=0;selected=0;checkpoint=0;startLevel();}
@@ -111,7 +129,7 @@ function failLevel(reason){failure=reason;sound('sad');menu('repeat');}
 function finishLevel(){
   if(ones===0)score+=500;
   sound('fanfare');
-  if(level===2){best=Math.max(best,score);saveBest();menu('win');}
+  if(level===LEVELS.length-1){best=Math.max(best,score);saveBest();menu('win');}
   else menu('promotion');
 }
 function togglePause(){if(state==='play'){paused=!paused;clearInput();}}
@@ -186,6 +204,7 @@ function tone(freq,delay,duration,type='sine',end=freq){
 }
 function sound(kind){
   if(kind==='ding'){tone(880,0,0.15);tone(1320,0.08,0.22);}
+  if(kind==='throw')tone(420,0,0.14,'triangle',110);
   if(kind==='buzz')tone(150,0,0.25,'sawtooth',65);
   if(kind==='clang'){tone(1600,0,0.16,'triangle',600);tone(2230,0,0.10);}
   if(kind==='fanfare')[523,659,784,1047].forEach((f,i)=>tone(f,i*0.12,0.25,'triangle'));
@@ -193,9 +212,101 @@ function sound(kind){
   if(kind==='powerup')[440,660,880,1320].forEach((f,i)=>tone(f,i*0.08,0.2));
 }
 
+
+// PAN D — zamach, wyprost ręki, wypuszczenie pocisku i powrót.
+// Punkty maski są w układzie źródłowego obrazka 1145×1374.
+// Maska sylwetki w canvasie ukrywa namalowaną szachownicę PNG.
+const BOSS_SHAPE=[[707,17],[722,17],[750,23],[772,33],[773,35],[785,41],[808,63],[817,79],[819,80],[819,83],[821,84],[828,98],[832,112],[834,132],[831,156],[823,184],[826,182],[836,183],[839,188],[839,193],[835,204],[833,205],[827,217],[824,219],[819,232],[815,237],[815,240],[813,242],[813,250],[810,257],[806,261],[803,261],[801,263],[795,292],[797,293],[805,312],[807,329],[814,345],[815,355],[825,361],[836,371],[851,396],[859,421],[860,439],[862,444],[869,435],[879,416],[885,409],[894,392],[900,385],[917,385],[920,380],[929,379],[942,388],[948,390],[955,396],[964,400],[968,404],[972,405],[973,407],[984,412],[985,414],[989,415],[1008,428],[1017,432],[1018,434],[1042,446],[1053,454],[1067,460],[1069,464],[1069,470],[1064,480],[1077,485],[1070,498],[1066,502],[1065,507],[1062,508],[1054,505],[1048,516],[1048,518],[1052,521],[1061,524],[1049,547],[1044,549],[1034,569],[1030,569],[1027,566],[1025,566],[1023,569],[1038,586],[1041,594],[1041,602],[1038,617],[1036,623],[1033,626],[1035,633],[1035,654],[1033,664],[1027,679],[1014,694],[1000,701],[978,702],[965,708],[952,707],[948,713],[943,714],[935,711],[930,706],[928,708],[915,708],[890,686],[871,682],[849,672],[859,690],[859,700],[848,716],[864,742],[865,751],[859,761],[867,766],[868,775],[874,780],[877,786],[881,789],[881,791],[893,805],[895,810],[898,812],[898,814],[908,827],[911,835],[915,839],[925,859],[926,865],[928,866],[939,899],[952,925],[957,941],[954,961],[933,998],[907,1064],[895,1089],[904,1107],[904,1115],[900,1123],[895,1127],[895,1130],[906,1147],[905,1152],[911,1153],[917,1163],[923,1164],[926,1167],[926,1171],[937,1174],[944,1186],[970,1195],[1002,1199],[1018,1207],[1024,1217],[1025,1227],[1028,1227],[1031,1232],[1031,1248],[1026,1253],[1016,1256],[1012,1259],[993,1264],[962,1269],[926,1270],[904,1268],[880,1263],[839,1246],[833,1246],[814,1254],[791,1253],[756,1247],[744,1242],[738,1237],[737,1231],[739,1223],[739,1213],[740,1209],[746,1205],[746,1190],[751,1172],[754,1167],[754,1165],[752,1164],[752,1157],[754,1155],[760,1134],[757,1116],[757,1102],[777,1068],[773,1028],[774,1005],[783,983],[785,982],[792,969],[797,965],[798,957],[794,956],[790,952],[788,948],[787,934],[781,927],[766,919],[762,915],[755,912],[752,908],[744,904],[728,889],[726,889],[714,876],[712,876],[680,844],[672,843],[666,844],[664,846],[664,848],[655,857],[648,868],[644,871],[644,873],[638,878],[638,880],[629,889],[625,896],[615,906],[615,908],[589,935],[589,937],[556,969],[554,969],[550,973],[547,985],[537,993],[535,993],[532,997],[530,997],[527,1001],[525,1001],[510,1016],[502,1049],[492,1068],[484,1076],[484,1078],[471,1090],[471,1092],[464,1099],[462,1099],[461,1102],[433,1130],[437,1142],[437,1151],[417,1175],[409,1192],[409,1195],[405,1201],[403,1209],[390,1216],[391,1228],[397,1246],[399,1248],[400,1256],[405,1262],[412,1278],[413,1294],[417,1295],[419,1299],[419,1317],[417,1322],[407,1327],[372,1330],[303,1330],[283,1327],[281,1328],[260,1322],[252,1317],[246,1309],[247,1287],[248,1280],[251,1277],[254,1261],[256,1260],[261,1248],[266,1241],[275,1216],[278,1212],[278,1209],[276,1208],[273,1201],[273,1195],[280,1182],[275,1162],[275,1147],[282,1137],[292,1131],[304,1120],[304,1098],[308,1094],[308,1092],[315,1086],[318,1077],[320,1076],[336,1027],[343,1013],[343,1010],[345,1009],[345,1006],[356,986],[360,982],[364,974],[367,972],[367,970],[380,956],[400,943],[403,928],[408,918],[428,905],[428,883],[432,876],[449,865],[450,857],[461,822],[470,802],[472,801],[477,789],[480,786],[480,775],[482,771],[487,767],[486,758],[484,758],[480,754],[476,746],[476,732],[482,714],[472,704],[469,696],[469,685],[476,669],[490,649],[490,647],[486,644],[485,640],[482,637],[480,627],[482,617],[492,603],[488,592],[484,588],[472,564],[470,563],[470,560],[456,531],[447,502],[439,467],[427,463],[408,452],[393,437],[389,430],[382,426],[371,415],[366,405],[364,404],[357,384],[357,350],[352,347],[352,349],[348,352],[346,361],[343,367],[339,370],[335,381],[325,391],[317,394],[311,394],[303,390],[299,385],[299,374],[305,366],[306,360],[311,352],[319,324],[322,321],[327,309],[319,310],[311,316],[301,318],[293,325],[280,330],[271,330],[264,328],[260,326],[252,316],[252,305],[256,300],[278,290],[291,279],[307,271],[312,266],[341,254],[336,249],[326,244],[319,237],[317,237],[295,215],[288,202],[287,193],[289,186],[294,180],[299,177],[310,177],[317,183],[319,183],[328,192],[344,199],[355,207],[364,211],[373,221],[375,221],[387,232],[402,232],[403,230],[400,218],[393,207],[386,189],[383,176],[383,166],[386,153],[393,145],[400,142],[411,142],[416,144],[425,154],[435,176],[439,190],[450,211],[454,230],[460,238],[461,242],[464,243],[478,258],[493,261],[501,265],[502,267],[518,262],[526,263],[531,247],[539,238],[544,236],[549,219],[556,211],[556,209],[567,198],[569,198],[566,145],[569,139],[575,134],[583,134],[587,138],[589,138],[590,122],[596,94],[607,69],[609,68],[614,58],[616,58],[616,56],[624,48],[626,48],[626,46],[629,46],[629,44],[635,42],[639,38],[654,30],[684,20],[707,17]];
+const BOSS_ARM=[[550,298],[493,277],[463,244],[435,171],[421,151],[408,144],
+ [393,147],[386,159],[386,182],[400,240],[344,200],[320,184],[301,180],
+ [289,187],[286,201],[299,219],[327,243],[353,261],[281,297],[261,311],
+ [254,324],[260,334],[275,337],[314,323],[294,380],[303,388],[318,383],
+ [338,365],[354,364],[357,400],[380,460],[407,506],[454,547],[514,514],
+ [557,447],[575,368]];
+const boss={x:950,feet:390,w:224,h:269,face:1,t:0,wait:1.5,active:false,
+ aimX:640,shots:0};
+function resetBoss(){Object.assign(boss,{x:950,t:0,wait:1.5,active:false,aimX:640,shots:0,face:1});}
+function smooth(t){t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);}
+function bossPose(){
+ const t=boss.active?boss.t:0;
+ let a=0,lean=0;
+ if(boss.active){
+  if(t<0.42){a=0.13*smooth(t/0.42);lean=0.055*smooth(t/0.42);}
+  else if(t<0.56){const p=smooth((t-0.42)/0.14);a=0.13-0.23*p;lean=0.055-0.12*p;}
+  else{const p=smooth((t-0.56)/0.46);a=-0.10*(1-p);lean=-0.065*(1-p);}
+ }
+ return {a,lean,breathe:boss.active?0:Math.sin(clock*3)*1.5};
+}
+function rotatePoint(x,y,px,py,a){
+ const dx=x-px,dy=y-py;return {x:px+dx*Math.cos(a)-dy*Math.sin(a),y:py+dx*Math.sin(a)+dy*Math.cos(a)};
+}
+function bossHand(){
+ const pose=bossPose();
+ let p=rotatePoint(400,290,535,360,pose.a);
+ p=rotatePoint(p.x,p.y,650,760,pose.lean);
+ return {x:boss.x+boss.face*(p.x/1145-0.5)*boss.w,y:boss.feet-boss.h+p.y/1374*boss.h+pose.breathe};
+}
+function throwOne(){
+ const hand=bossHand();
+ const flight=difficulty===2?0.68:0.85,gravity=440;
+ const offset=(boss.shots%2===0?-1:1)*(difficulty===2?55:35);
+ const target=Math.max(80,Math.min(W-80,boss.aimX+offset));
+ items.push({kind:'1',x:hand.x,y:hand.y,vx:(target-hand.x)/flight,
+  vy:(FLOOR-PLAYER_H/2-hand.y-0.5*gravity*flight*flight)/flight,
+  gravity,phase:0,reflected:false,warning:0,thrown:true});
+ boss.shots++;sound('throw');burst(hand.x,hand.y,'#ff7975');
+}
+function updateBoss(dt){
+ if(!boss.active){
+  boss.wait-=dt;
+  const destination=640+Math.sin(elapsed*0.55)*340;
+  boss.x+=Math.max(-100*dt,Math.min(100*dt,destination-boss.x));
+  boss.face=player.x<boss.x?1:-1;
+  if(boss.wait<=0){boss.active=true;boss.t=0;boss.shots=0;boss.aimX=player.x;}
+  return;
+ }
+ boss.t+=dt;
+ const count=difficulty===2?3:2;
+ // Cel zostaje ustalony podczas zamachu. Jedynki nie śledzą gracza w locie.
+ while(boss.shots<count&&boss.t>=0.52+boss.shots*0.13)throwOne();
+ if(boss.t>=1.04){boss.active=false;boss.wait=difficulty===2?0.10:0.32;}
+}
+function bossPath(points){ctx.moveTo(points[0][0],points[0][1]);for(const p of points.slice(1))ctx.lineTo(p[0],p[1]);ctx.closePath();}
+function drawBoss(){
+ const pose=bossPose(),im=assets.pand;
+ ctx.save();ctx.translate(boss.x,boss.feet-boss.h+pose.breathe);
+ ctx.scale(boss.face*boss.w/1145,boss.h/1374);ctx.translate(-572.5,0);
+ if(ready(im)){
+  // Nogi pozostają na ziemi; tułów obraca się w biodrach, ręka w barku.
+  ctx.save();ctx.beginPath();bossPath(BOSS_SHAPE);ctx.clip();
+  ctx.beginPath();ctx.rect(0,759,1145,615);ctx.clip();ctx.drawImage(im,0,0,1145,1374);ctx.restore();
+  ctx.save();ctx.translate(650,760);ctx.rotate(pose.lean);ctx.translate(-650,-760);
+  ctx.save();ctx.beginPath();bossPath(BOSS_SHAPE);ctx.clip();
+  ctx.beginPath();bossPath(BOSS_SHAPE);bossPath(BOSS_ARM);ctx.clip('evenodd');
+  ctx.beginPath();ctx.rect(0,0,1145,764);ctx.clip();ctx.drawImage(im,0,0,1145,1374);ctx.restore();
+  ctx.save();ctx.translate(535,360);ctx.rotate(pose.a);ctx.translate(-535,-360);
+  ctx.beginPath();bossPath(BOSS_SHAPE);ctx.clip();ctx.beginPath();bossPath(BOSS_ARM);ctx.clip();ctx.drawImage(im,0,0,1145,1374);ctx.restore();ctx.restore();
+ }else{
+  // Zastępstwo również wykonuje zamach i rzuca z tej samej pozycji dłoni.
+  ctx.fillStyle='#686e7b';ctx.fillRect(460,440,360,830);
+  ctx.fillStyle='#e8ae8b';ctx.beginPath();ctx.arc(650,245,155,0,Math.PI*2);ctx.fill();
+ }
+ ctx.restore();
+ panel(boss.x-95,100,190,34,'rgba(72,23,32,.94)');text('PAN D',boss.x,117,22,'#ffda62');
+ if(boss.active&&boss.t<0.52){
+  const hand=bossHand();text('!',hand.x,hand.y-27,36,'#ffda62');
+  ctx.save();ctx.strokeStyle='rgba(255,100,90,.55)';ctx.lineWidth=2;ctx.setLineDash([7,8]);
+  ctx.beginPath();ctx.moveTo(hand.x,hand.y);ctx.lineTo(boss.aimX,FLOOR-PLAYER_H/2);ctx.stroke();ctx.restore();
+ }
+}
+
 // SPAWNER — w klasie 3 sprawdziany zastępują część jedynek.
 function spawn(kind,fromSeries=false){
   const cfg=LEVELS[level];
+  if(level===3){
+    if(kind&&kind!=='5'&&kind!=='logo')return;
+    kind=kind||'5';
+  }
   if(!kind)kind=Math.random()<cfg.good?'5':(Math.random()<cfg.exam?'exam':'1');
   // Długość serii zależy od trudności; odstęp między kartkami 0,55 s.
   if(kind==='exam'&&!fromSeries&&examQueue===0){examQueue=DIFFICULTIES[difficulty].series-1;examIn=0.55;}
@@ -248,6 +359,7 @@ function update(dt){
   updatePlayer(dt);boost=Math.max(0,boost-dt);shake=Math.max(0,shake-dt);
   const old=Math.floor(elapsed);elapsed+=dt;score+=Math.floor(elapsed)-old;
   if(elapsed>=LEVELS[level].time){failLevel('Koniec czasu! Nie udało się zebrać wymaganych piątek.');return;}
+  if(level===3)updateBoss(dt);
   if(examQueue>0){examIn-=dt;if(examIn<=0){spawn('exam',true);examQueue--;examIn+=0.55;}}
   spawnIn-=dt;boostIn-=dt;
   if(spawnIn<=0){spawn();spawnIn+=LEVELS[level].interval;}
@@ -260,10 +372,11 @@ function update(dt){
       const dx=player.x-o.x,dy=FLOOR-PLAYER_H/2-o.y,dist=Math.hypot(dx,dy);
       if(dist<MAGNET){const speed=650;o.vx=dx/Math.max(dist,1)*speed;o.vy=dy/Math.max(dist,1)*speed;}
     }
+    if(o.thrown&&!o.reflected)o.vy+=o.gravity*dt;
     o.x+=o.vx*dt;o.y+=o.vy*dt;
     const half=size(o).w/2;
-    if(o.x<half){o.x=half;o.vx=Math.abs(o.vx);}
-    if(o.x>W-half){o.x=W-half;o.vx=-Math.abs(o.vx);}
+    if(!o.thrown&&o.x<half){o.x=half;o.vx=Math.abs(o.vx);}
+    if(!o.thrown&&o.x>W-half){o.x=W-half;o.vx=-Math.abs(o.vx);}
     if(!o.reflected&&collides(o)){
       if(boost>0&&(o.kind==='1'||o.kind==='exam')){
         o.reflected=true;o.vy=-420;o.vx=(o.x<player.x?-1:1)*260;sound('clang');
@@ -273,7 +386,7 @@ function update(dt){
       // Piątka minęła stopy — odejmujemy postęp tylko raz, bez wartości ujemnych.
       fives=Math.max(0,fives-1);items.splice(i,1);
       announce('Uciekła piątka! −1 do postępu klasy.');
-    }else if(o.y>H+120||(o.reflected&&o.y<-120))items.splice(i,1);
+    }else if(o.x<-150||o.x>W+150||o.y>H+120||(o.reflected&&o.y<-120))items.splice(i,1);
   }
   for(const p of sparks){p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=300*dt;}
   sparks=sparks.filter(p=>p.life>0);
@@ -297,7 +410,7 @@ function background(){
     const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#639dd0');g.addColorStop(1,'#dbe9ee');
     ctx.fillStyle=g;ctx.fillRect(0,0,W,H);ctx.fillStyle='#818998';ctx.fillRect(0,FLOOR,W,H-FLOOR);
   }
-  ctx.restore();if(level===2){ctx.fillStyle='rgba(25,63,133,.27)';ctx.fillRect(0,0,W,H);}
+  ctx.restore();if(level>=2){ctx.fillStyle='rgba(25,63,133,.27)';ctx.fillRect(0,0,W,H);}
 }
 function drawPlayer(){
   const w=playerWidth(),bounce=player.moving?Math.sin(clock*19)*4:0;
@@ -376,19 +489,21 @@ function drawUI(){
         panel(r.x,r.y,r.w,r.h,i===difficulty?'#34466c':'#14233d');
         ctx.strokeStyle=i===difficulty?'#ffda62':'#697995';ctx.lineWidth=4;ctx.strokeRect(r.x,r.y,r.w,r.h);
         text(d.name,r.x+r.w/2,r.y+48,34,i===difficulty?'#ffda62':'#fff');
-        text('Piątki: '+d.targets.join(' / '),r.x+r.w/2,r.y+110,21);
-        text('Czas: '+d.times.join(' / ')+' s',r.x+r.w/2,r.y+151,21);
+        text('Piątki: '+d.targets.join(' / '),r.x+r.w/2,r.y+110,19);
+        text('Czas: '+d.times.join(' / ')+' s',r.x+r.w/2,r.y+151,18);
         text(['Wolniej, więcej piątek','Dotychczasowy balans','Szybciej, dłuższe serie'][i],r.x+r.w/2,r.y+208,19,'#cbd7e7');
-      });button('Enter — zaczynamy',610);
+      });text('Pan D w Klasie 4: tylko Normalny i Trudny',640,560,21,'#ffda62');button('Enter — zaczynamy',610);
     }else if(state==='select'){
-      text(level===1?'Odblokowano: nauczyciel dołącza do gry!':'Wybierz postać przed Klasą 3',640,132,38,'#ffda62');
+      text(level===1?'Odblokowano: nauczyciel dołącza do gry!':(level===3?'Klasa 4: Pan D — finał!':'Wybierz postać przed Klasą 3'),640,132,38,'#ffda62');
       text('Klasa '+(level+1)+' · ← → i Enter lub dotknij karty',640,195,25);
       cards.forEach((r,i)=>{
         panel(r.x,r.y,r.w,r.h,i===selected?'#34466c':'#14233d');
         ctx.strokeStyle=i===selected?'#ffda62':'#697995';ctx.lineWidth=4;ctx.strokeRect(r.x,r.y,r.w,r.h);
         picture(i?'damian':'uczen',r.x+45,r.y+15,210,210);
         text(i?'Damian':'Uczeń',r.x+150,r.y+266,30,i===selected?'#ffda62':'#fff');
-      });button('Enter — zaczynamy',620);
+      });
+      if(level===3)text('Unikaj rzutów Pana D. Zbieraj piątki — tarcza odbija pociski!',640,587,21,'#ffda62');
+      button('Enter — zaczynamy',635);
     }else if(state==='win'){
       panel(220,95,840,540,'rgba(248,242,220,.97)');logo(640,115,75);
       text('ZDAŁEŚ!',640,242,55,'#162743');
@@ -415,6 +530,7 @@ function render(){
   if(shake>0&&state==='play'&&!paused)ctx.translate((Math.random()-.5)*12,(Math.random()-.5)*12);
   background();
   if(state==='play'){
+    if(level===3)drawBoss();
     items.forEach(drawItem);drawPlayer();
     for(const p of sparks){ctx.globalAlpha=p.life/.5;ctx.fillStyle=p.color;ctx.fillRect(p.x,p.y,5,5);}ctx.globalAlpha=1;
   }
